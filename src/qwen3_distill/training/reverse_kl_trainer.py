@@ -65,13 +65,20 @@ class ReverseKLDistillationTrainer:
             eps=1e-8
         )
 
+        # Multiple rollouts per prompt for variance reduction
+        self.num_rollouts = self.config.get("num_rollouts_per_prompt", 1)
+
         print("Initialized Reverse KL distillation trainer")
         print("  Algorithm: On-policy with per-token reverse KL rewards")
         print(f"  Optimizer: Adam (lr={lr})")
+        print(f"  Rollouts per prompt: {self.num_rollouts}")
 
     def train_epoch(self, trajectories: List[dict]) -> dict:
         """
         Train for one epoch on scored trajectories.
+
+        With multiple rollouts enabled, trajectories from the same prompt are batched together
+        and gradients are accumulated before updating (variance reduction).
 
         Args:
             trajectories: List of dicts with 'prompt', 'generated_text', 'tokens', 'teacher_logprobs'
@@ -81,56 +88,80 @@ class ReverseKLDistillationTrainer:
         """
         print(f"\nTraining on {len(trajectories)} trajectories...")
 
+        # Group trajectories by prompt for multi-rollout batching
+        if self.num_rollouts > 1:
+            prompt_batches = {}
+            for traj in trajectories:
+                prompt = traj["prompt"]
+                if prompt not in prompt_batches:
+                    prompt_batches[prompt] = []
+                prompt_batches[prompt].append(traj)
+
+            print(f"  Batched {len(trajectories)} trajectories into {len(prompt_batches)} unique prompts")
+            print(f"  Average rollouts per prompt: {len(trajectories) / len(prompt_batches):.1f}")
+        else:
+            # Single rollout mode: each trajectory is its own batch
+            prompt_batches = {f"traj_{i}": [traj] for i, traj in enumerate(trajectories)}
+
         # Compute student logprobs and reverse KL rewards
         all_rewards = []
         all_losses = []
 
-        for traj in trajectories:
-            prompt = traj["prompt"]
-            generated_text = traj["generated_text"]
-            teacher_logprobs = torch.tensor(traj["teacher_logprobs"]).to(self.student_model.device)
-
-            # Get student logprobs WITH gradients for training
-            student_logprobs = self._compute_student_logprobs(
-                prompt,
-                generated_text,
-                requires_grad=True
-            )
-
-            if student_logprobs is None or len(student_logprobs) == 0:
-                continue
-
-            # Match lengths (teacher logprobs may be shorter due to truncation)
-            min_len = min(len(student_logprobs), len(teacher_logprobs))
-            student_lp = student_logprobs[:min_len]
-            teacher_lp = teacher_logprobs[:min_len]
-
-            # Reverse KL divergence: D_KL(student || teacher) = student_log - teacher_log
-            reverse_kl = student_lp - teacher_lp
-
-            # Reward is negative reverse KL (we want to minimize divergence)
-            rewards = -reverse_kl
-
-            all_rewards.extend(rewards.detach().cpu().tolist())
-
-            # Compute policy gradient loss
-            # Loss = -mean(reward * log_prob) for policy gradient
-            loss = -(rewards.detach() * student_lp).mean()  # Detach rewards to avoid backprop through them
-
-            all_losses.append(loss.item())
-
-            # Backward pass
+        for batch_trajs in prompt_batches.values():
+            # Accumulate gradients across all rollouts in this batch
             self.optimizer.zero_grad()
-            loss.backward()
+            batch_rewards = []
+            batch_losses = []
 
-            # Gradient clipping
+            for traj in batch_trajs:
+                prompt = traj["prompt"]
+                generated_text = traj["generated_text"]
+                teacher_logprobs = torch.tensor(traj["teacher_logprobs"]).to(self.student_model.device)
+
+                # Get student logprobs WITH gradients for training
+                student_logprobs = self._compute_student_logprobs(
+                    prompt,
+                    generated_text,
+                    requires_grad=True
+                )
+
+                if student_logprobs is None or len(student_logprobs) == 0:
+                    continue
+
+                # Match lengths (teacher logprobs may be shorter due to truncation)
+                min_len = min(len(student_logprobs), len(teacher_logprobs))
+                student_lp = student_logprobs[:min_len]
+                teacher_lp = teacher_logprobs[:min_len]
+
+                # Reverse KL divergence: D_KL(student || teacher) = student_log - teacher_log
+                reverse_kl = student_lp - teacher_lp
+
+                # Reward is negative reverse KL (we want to minimize divergence)
+                rewards = -reverse_kl
+
+                batch_rewards.extend(rewards.detach().cpu().tolist())
+
+                # Compute policy gradient loss
+                # Loss = -mean(reward * log_prob) for policy gradient
+                loss = -(rewards.detach() * student_lp).mean()  # Detach rewards to avoid backprop through them
+
+                batch_losses.append(loss.item())
+
+                # Backward pass (accumulates gradients without stepping)
+                loss.backward()
+
+            # Gradient clipping after accumulating all gradients from this prompt batch
             torch.nn.utils.clip_grad_norm_(
                 self.student_model.parameters(),
                 max_norm=1.0
             )
 
-            # Optimizer step with Adam
+            # Single optimizer step per prompt (averages gradients across rollouts)
             self.optimizer.step()
+
+            # Collect metrics
+            all_rewards.extend(batch_rewards)
+            all_losses.extend(batch_losses)
 
         # Metrics
         metrics = {
@@ -138,12 +169,15 @@ class ReverseKLDistillationTrainer:
             "mean_reward": np.mean(all_rewards) if all_rewards else 0.0,
             "mean_reverse_kl": -np.mean(all_rewards) if all_rewards else 0.0,
             "num_trajectories": len(trajectories),
+            "num_unique_prompts": len(prompt_batches),
         }
 
         print(f"  Training complete:")
         print(f"    Loss: {metrics['loss']:.4f}")
         print(f"    Mean Reward: {metrics['mean_reward']:.4f}")
         print(f"    Mean Reverse KL: {metrics['mean_reverse_kl']:.4f}")
+        if self.num_rollouts > 1:
+            print(f"    Unique Prompts: {metrics['num_unique_prompts']}")
 
         return metrics
 

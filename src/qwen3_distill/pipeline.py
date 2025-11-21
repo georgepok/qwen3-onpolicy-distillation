@@ -157,9 +157,10 @@ class OnPolicyDistillationPipeline:
             List of generated trajectories
         """
         # Use local student model for generation
-        samples_per_prompt = 1  # Generate 1 sample per prompt
+        # Support multiple rollouts per prompt for variance reduction
+        samples_per_prompt = self.config.get("training", {}).get("num_rollouts_per_prompt", 1)
         expected_trajectories = len(prompts) * samples_per_prompt
-        print(f"Generating {len(prompts)} prompts × {samples_per_prompt} samples = {expected_trajectories} trajectories...")
+        print(f"Generating {len(prompts)} prompts × {samples_per_prompt} rollouts = {expected_trajectories} trajectories...")
         log_gpu_memory("Before generation")
 
         trajectories = []
@@ -170,31 +171,35 @@ class OnPolicyDistillationPipeline:
         for prompt in prompts:
             inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
-            with torch.no_grad():
-                outputs = model.generate(
-                    **inputs,
-                    max_new_tokens=512,
-                    do_sample=True,
-                    temperature=0.7,
-                    top_p=0.9,
-                    pad_token_id=tokenizer.eos_token_id,
-                )
+            # Generate multiple rollouts for this prompt (variance reduction)
+            for rollout_idx in range(samples_per_prompt):
+                with torch.no_grad():
+                    outputs = model.generate(
+                        **inputs,
+                        max_new_tokens=512,
+                        do_sample=True,
+                        temperature=0.7,
+                        top_p=0.9,
+                        pad_token_id=tokenizer.eos_token_id,
+                    )
 
-            # Decode the generated text
-            full_text = tokenizer.decode(outputs[0], skip_special_tokens=False)
-            generated_text = tokenizer.decode(outputs[0][len(inputs.input_ids[0]):], skip_special_tokens=True)
+                # Decode the generated text
+                full_text = tokenizer.decode(outputs[0], skip_special_tokens=False)
+                generated_text = tokenizer.decode(outputs[0][len(inputs.input_ids[0]):], skip_special_tokens=True)
 
-            # Create trajectory dict
-            trajectory = {
-                "prompt": prompt,
-                "generated_text": generated_text,
-                "full_text": full_text,
-                "tokens": outputs[0].tolist(),
-            }
-            trajectories.append(trajectory)
+                # Create trajectory dict
+                trajectory = {
+                    "prompt": prompt,
+                    "generated_text": generated_text,
+                    "full_text": full_text,
+                    "tokens": outputs[0].tolist(),
+                }
+                trajectories.append(trajectory)
 
         log_gpu_memory("After generation")
         print(f"Generated {len(trajectories)} trajectories (expected {expected_trajectories})")
+        if samples_per_prompt > 1:
+            print(f"  → {len(prompts)} unique prompts with {samples_per_prompt} rollouts each")
 
         return trajectories
     
