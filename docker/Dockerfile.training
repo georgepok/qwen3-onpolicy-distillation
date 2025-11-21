@@ -1,0 +1,41 @@
+# Dockerfile for Training Service
+# Lightweight container for LoRA training with unsloth
+# Using 25.09 for GB10 (Blackwell) GPU support - official Spark image
+
+FROM nvcr.io/nvidia/pytorch:25.09-py3
+
+WORKDIR /workspace/qwen3-distill
+
+# Install training dependencies (unsloth, bitsandbytes)
+RUN pip install --no-cache-dir \
+    unsloth>=2024.1 \
+    bitsandbytes>=0.41.0 \
+    einops>=0.7.0 \
+    peft>=0.8.0 \
+    transformers>=4.36.0 \
+    datasets>=2.16.0 \
+    accelerate>=0.25.0
+
+# Install OpenAI client for communication with vLLM services
+RUN pip install --no-cache-dir \
+    openai>=1.6.0 \
+    requests>=2.31.0
+
+# Copy project files
+COPY . /workspace/qwen3-distill
+
+# Install project in editable mode
+RUN pip install -e .
+
+# Create necessary directories
+RUN mkdir -p /workspace/qwen3-distill/checkpoints \
+    /workspace/qwen3-distill/logs \
+    /workspace/qwen3-distill/results
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV VLLM_API_URL=http://vllm-student:8000
+ENV TEACHER_API_URL=http://vllm-teacher:30000
+
+# Default command
+CMD ["/bin/bash"]

@@ -1,0 +1,154 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qwen3-distill"
+version = "0.1.0"
+description = "On-policy distillation pipeline for Qwen3-4B optimized for Nvidia GB10 DGX"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "George", email = "your.email@example.com"}
+]
+keywords = [
+    "distillation",
+    "on-policy",
+    "qwen3",
+    "llm",
+    "machine-learning",
+    "deep-learning",
+    "vllm",
+    "sglang",
+    "unsloth"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "torch>=2.0.0",
+    "transformers>=4.36.0",
+    "datasets>=2.14.0",
+    "accelerate>=0.25.0",
+    # vllm and sglang run in separate containers - only need API client
+    "openai>=1.6.0",
+    "requests>=2.31.0",
+    "unsloth>=2024.1",
+    "trl>=0.8.0,<0.9.0",  # TRL for OnlineDPOTrainer
+    "peft>=0.7.0",
+    "bitsandbytes>=0.41.0",
+    "scipy>=1.11.0",
+    "numpy>=1.24.0",
+    "pyyaml>=6.0",
+    "wandb>=0.16.0",
+    "tensorboard>=2.15.0",
+    "tqdm>=4.66.0",
+    "pandas>=2.1.0",
+    "einops>=0.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.11.0",
+    "isort>=5.12.0",
+    "flake8>=6.1.0",
+    "mypy>=1.7.0",
+    "pre-commit>=3.5.0",
+]
+docs = [
+    "sphinx>=7.2.0",
+    "sphinx-rtd-theme>=2.0.0",
+    "myst-parser>=2.0.0",
+]
+# vllm and sglang are optional - only needed if running single-container mode
+single-container = [
+    "vllm>=0.3.0",
+    "sglang>=0.2.0",
+]
+
+[project.scripts]
+qwen3-distill-pipeline = "qwen3_distill.cli:main"
+qwen3-distill-generate = "qwen3_distill.generation.cli:main"
+qwen3-distill-score = "qwen3_distill.scoring.cli:main"
+qwen3-distill-train = "qwen3_distill.training.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/yourusername/qwen3-onpolicy-distillation"
+Documentation = "https://qwen3-distill.readthedocs.io"
+Repository = "https://github.com/yourusername/qwen3-onpolicy-distillation"
+Issues = "https://github.com/yourusername/qwen3-onpolicy-distillation/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ['py310', 'py311', 'py312']
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_output = 3
+include_trailing_comma = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--cov=qwen3_distill",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml",
+]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+follow_imports = "normal"
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["src/qwen3_distill"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]

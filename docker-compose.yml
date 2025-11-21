@@ -1,0 +1,157 @@
+version: '3.8'
+
+services:
+  # vLLM Student Generation Service
+  vllm-student:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.vllm
+    image: qwen3-distill-vllm:latest
+    container_name: qwen3-vllm-student
+    runtime: nvidia
+    ipc: host
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0
+      - CUDA_VISIBLE_DEVICES=0
+      # vLLM configuration from config file
+      - VLLM_MODEL=${STUDENT_MODEL:-Qwen/Qwen3-4B-Instruct}
+      - VLLM_GPU_MEMORY_UTILIZATION=${STUDENT_GPU_MEM:-0.3}
+      - VLLM_MAX_MODEL_LEN=${STUDENT_MAX_LEN:-4096}
+      - VLLM_TENSOR_PARALLEL_SIZE=1
+      - VLLM_TRUST_REMOTE_CODE=true
+      - VLLM_DTYPE=auto
+      - VLLM_ENABLE_CHUNKED_PREFILL=true
+    volumes:
+      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
+      - ./checkpoints:/workspace/checkpoints:ro
+    ports:
+      - "8000:8000"
+    command: >
+      python -m vllm.entrypoints.openai.api_server
+      --model ${STUDENT_MODEL:-Qwen/Qwen3-4B-Instruct}
+      --host 0.0.0.0
+      --port 8000
+      --gpu-memory-utilization ${STUDENT_GPU_MEM:-0.3}
+      --max-model-len ${STUDENT_MAX_LEN:-4096}
+      --trust-remote-code
+      --dtype auto
+      --enable-chunked-prefill
+      --enable-lora
+      --max-loras 1
+      --max-lora-rank 16
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # vLLM Teacher Scoring Service
+  vllm-teacher:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.vllm
+    image: qwen3-distill-vllm:latest
+    container_name: qwen3-vllm-teacher
+    runtime: nvidia
+    ipc: host
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0
+      - CUDA_VISIBLE_DEVICES=0
+      # vLLM configuration for teacher
+      - VLLM_MODEL=${TEACHER_MODEL:-Qwen/Qwen3-32B}
+      - VLLM_GPU_MEMORY_UTILIZATION=${TEACHER_GPU_MEM:-0.28}
+      - VLLM_MAX_MODEL_LEN=4096
+      - VLLM_TENSOR_PARALLEL_SIZE=1
+      - VLLM_TRUST_REMOTE_CODE=true
+      - VLLM_DTYPE=auto
+      - VLLM_QUANTIZATION=${TEACHER_QUANT:-fp8}
+    volumes:
+      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
+    ports:
+      - "30000:30000"
+    command: >
+      python -m vllm.entrypoints.openai.api_server
+      --model ${TEACHER_MODEL:-Qwen/Qwen3-32B}
+      --host 0.0.0.0
+      --port 30000
+      --gpu-memory-utilization ${TEACHER_GPU_MEM:-0.28}
+      --max-model-len 4096
+      --trust-remote-code
+      --dtype auto
+      --quantization ${TEACHER_QUANT:-fp8}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:30000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # Training Service
+  training:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.training
+    image: qwen3-distill-training:latest
+    container_name: qwen3-training
+    runtime: nvidia
+    ipc: host
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONUNBUFFERED=1
+      - VLLM_API_URL=http://vllm-student:8000
+      - TEACHER_API_URL=http://vllm-teacher:30000
+      - HF_HOME=/root/.cache/huggingface
+      - WANDB_API_KEY=${WANDB_API_KEY:-}
+      - HF_TOKEN=${HF_TOKEN:-}
+    volumes:
+      - ./:/workspace/qwen3-distill
+      - ${HF_CACHE_DIR:-~/.cache/huggingface}:/root/.cache/huggingface
+      - ./checkpoints:/workspace/qwen3-distill/checkpoints
+      - ./logs:/workspace/qwen3-distill/logs
+      - ./results:/workspace/qwen3-distill/results
+    working_dir: /workspace/qwen3-distill
+    stdin_open: true
+    tty: true
+    shm_size: 32gb
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      vllm-teacher:
+        condition: service_healthy
+    command: /bin/bash
+
+networks:
+  default:
+    driver: bridge
+
+# Environment file template - create .env file with these values:
+# STUDENT_MODEL=Qwen/Qwen3-4B-Instruct
+# TEACHER_MODEL=Qwen/Qwen3-32B-Instruct
+# TEACHER_QUANT=fp8
+# STUDENT_GPU_MEM=0.2
+# TEACHER_GPU_MEM=0.35
+# STUDENT_MAX_LEN=4096
+# HF_CACHE_DIR=~/.cache/huggingface
+# WANDB_API_KEY=your_wandb_key
+# HF_TOKEN=your_hf_token

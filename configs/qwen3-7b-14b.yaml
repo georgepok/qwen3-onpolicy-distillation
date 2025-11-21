@@ -1,0 +1,58 @@
+# Configuration for Qwen3-7B student with Qwen3-14B teacher
+# Memory budget: ~70GB total (suitable for 80GB GPUs)
+
+generation:
+  model_name: "Qwen/Qwen3-7B-Instruct"
+  num_parallel_instances: 1
+  batch_size: 24
+  max_tokens: 512
+  temperature: 1.0
+  top_p: 0.9
+  gpu_memory_utilization: 0.22  # ~28GB for 7B model
+  tensor_parallel_size: 1
+  enable_chunked_prefill: true
+
+scoring:
+  model_name: "Qwen/Qwen3-14B-Instruct"
+  quantization: "fp8"  # Blackwell FP8 tensor cores
+  max_batch_size: 16
+  use_tensor_cores: true
+  gpu_memory_utilization: 0.22  # ~28GB in FP8
+  enable_cache: true
+  compute_perplexity: true
+
+training:
+  model_name: "Qwen/Qwen3-7B-Instruct"
+  lora_rank: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  learning_rate: 2.0e-5
+  batch_size: 4
+  gradient_accumulation_steps: 8
+  max_grad_norm: 1.0
+  warmup_steps: 100
+  total_steps: 10000
+  mixed_precision: "bf16"
+  use_flash_attention: true
+  kl_coef: 1.0
+
+
+pipeline:
+  num_epochs: 10
+  save_interval: 1
+  eval_interval: 500
+  checkpoint_dir: "./checkpoints"
+  log_dir: "./logs"
+
+  use_wandb: false
+  wandb_project: "qwen3-distillation"
+  wandb_entity: null
+
+  use_tensorboard: true
+  tensorboard_dir: "./runs"
+
+hardware:
+  device: "cuda:0"
+  pin_memory: true
+  num_workers: 4
+  prefetch_factor: 2

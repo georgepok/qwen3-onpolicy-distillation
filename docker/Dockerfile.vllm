@@ -1,0 +1,18 @@
+# Dockerfile for vLLM Student Generation Service
+# Uses official NVIDIA vLLM container for GB10 support
+
+FROM nvcr.io/nvidia/vllm:25.09-py3
+
+WORKDIR /workspace
+
+# Install minimal dependencies for API server
+RUN pip install --no-cache-dir fastapi uvicorn
+
+# Expose vLLM OpenAI-compatible API port
+EXPOSE 8000
+
+# Default command: Start vLLM OpenAI API server
+# Model and parameters will be provided via environment variables or command args
+CMD ["python", "-m", "vllm.entrypoints.openai.api_server", \
+     "--host", "0.0.0.0", \
+     "--port", "8000"]

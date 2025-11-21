@@ -1,0 +1,63 @@
+# Default configuration for Qwen3-4B On-Policy Distillation
+# Optimized for Nvidia GB10 DGX systems (128GB GPU RAM)
+
+generation:
+  model_name: "Qwen/Qwen3-4B-Instruct-2507"
+  api_url: "http://vllm-student:8000"
+  num_parallel_instances: 1
+  batch_size: 32
+  max_tokens: 512
+  temperature: 1.0
+  top_p: 0.9
+  samples_per_prompt: 4  # Multi-sampling: generate N trajectories per prompt (4x efficiency gain)
+  gpu_memory_utilization: 0.2  # ~25GB for single instance
+  tensor_parallel_size: 1
+  enable_chunked_prefill: true
+
+scoring:
+  model_name: "Qwen/Qwen3-32B"
+  api_url: "http://vllm-teacher:30000"
+  quantization: "fp8"  # Blackwell FP8 tensor cores
+  max_batch_size: 16
+  use_tensor_cores: true
+  gpu_memory_utilization: 0.28  # ~36GB in FP8 (reduced to fit with student 30%)
+  enable_cache: true
+  compute_perplexity: true
+
+training:
+  model_name: "Qwen/Qwen3-4B-Instruct-2507"
+  lora_rank: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  learning_rate: 2.0e-5
+  batch_size: 4
+  gradient_accumulation_steps: 8
+  max_grad_norm: 1.0
+  warmup_steps: 100
+  total_steps: 10000
+  mixed_precision: "bf16"
+  use_flash_attention: true
+  kl_coef: 1.0
+
+
+pipeline:
+  num_epochs: 10
+  save_interval: 1
+  eval_interval: 500
+  checkpoint_dir: "./checkpoints"
+  log_dir: "./logs"
+  
+  # Logging configuration
+  use_wandb: false
+  wandb_project: "qwen3-distillation"
+  wandb_entity: null
+  
+  use_tensorboard: true
+  tensorboard_dir: "./runs"
+
+# Hardware-specific optimizations
+hardware:
+  device: "cuda:0"
+  pin_memory: true
+  num_workers: 4
+  prefetch_factor: 2
